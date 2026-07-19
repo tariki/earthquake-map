@@ -759,7 +759,7 @@
         // 指数バックオフ付きAPI呼び出し
         async function callGeminiAPI(userQuery) {
             const apiKey = ""; 
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${urlApiKey(apiKey)}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${urlApiKey(apiKey)}`;
             
             const systemPrompt = `あなたは優秀な防災専門家および地震学者「防災AIアシスタント」です。
 ユーザーから提供された「2026年以降の震度5以上の地震データ」を前提知識として持っています。
