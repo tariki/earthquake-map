@@ -595,35 +595,35 @@
         async function fetchLatestEarthquakes() {
             try {
                 // 最新100件の地震情報を取得
-                const response = await fetch("https://api.p2pquake.net/v2/history?codes=551&limit=100");
+                const response = await fetch("https://api.p2pquake.net/v2/jma/quake?limit=100&since_date=20260101&min_scale=45");
                 if (!response.ok) throw new Error("API取得に失敗しました");
                 const data = await response.json();
 
                 // 震度コードの文字列マッピング
                 const scaleMap = {
-                    50: "5弱",
-                    55: "5強",
-                    60: "6弱",
-                    65: "6強",
+                    45: "5弱",
+                    50: "5強",
+                    55: "6弱",
+                    60: "6強",
                     70: "7"
                 };
                 const scaleClassMap = {
-                    50: "5-minus",
-                    55: "5-plus",
-                    60: "6-minus",
-                    65: "6-plus",
+                    45: "5-minus",
+                    50: "5-plus",
+                    55: "6-minus",
+                    60: "6-plus",
                     70: "7"
                 };
 
                 let newEarthquakes = [];
 
                 data.forEach(item => {
-                    if (!item.earthquake || !item.earthquake.hypocenter) return;
+                    if (!item.earthquake || !item.earthquake.hypocenter || item.issue.type !== "DetailScale") return;
                     const maxScale = item.earthquake.maxScale;
                     
-                    // 震度5弱以上（50以上）に絞り込み
-                    if (maxScale && maxScale >= 50) {
-                        const rawTime = item.time; // YYYY/MM/DD HH:MM:SS
+                    // 震度5弱以上（45以上）に絞り込み
+                    if (maxScale && maxScale >= 45) {
+                        const rawTime = item.earthquake.time; // YYYY/MM/DD HH:MM:SS
                         const dateObj = new Date(rawTime);
                         const year = dateObj.getFullYear();
                         
@@ -633,7 +633,7 @@
                             const shortTime = `${String(dateObj.getMonth() + 1).padStart(2, '0')}/${String(dateObj.getDate()).padStart(2, '0')} ${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
                             
                             newEarthquakes.push({
-                                id: item.id || `api-${item.time}`,
+                                id: item.id || `api-${item.earthquake.time}`,
                                 time: formattedTime,
                                 shortTime: shortTime,
                                 location: item.earthquake.hypocenter.name,
