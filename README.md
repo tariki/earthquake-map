@@ -97,7 +97,7 @@ async function callGeminiAPI(userQuery) {
 *   `README.md` — 本説明ドキュメント
     
 
-## � ライセンス
+## 📄 ライセンス
 
 本プロジェクトは MIT License のもとで公開されています。
 
@@ -121,7 +121,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## �💡 免責事項
+## 💡 免責事項
 
 *   本アプリケーションに表示される地震データは、開発時点および公開APIから提供される実績値を基に可視化されています。
     
