@@ -32,6 +32,10 @@
             border-color: rgba(16, 185, 129, 0.6) !important;
             background: rgba(9, 15, 29, 0.98) !important;
         }
+        /* 淡色地図を反転してダークテーマ化（色相を戻して海を青系に保つ） */
+        .dark-tiles {
+            filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6);
+        }
         /* スクロールバーのカスタム */
         ::-webkit-scrollbar {
             width: 6px;
@@ -334,10 +338,12 @@
         // ズームコントロールの位置を右下に変更
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-        // ダークテーマの地図タイル
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: 'abcd',
+        // 地理院タイル（淡色地図）をCSSフィルタでダークテーマ化して表示
+        L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+            attribution: '出典: <a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>',
+            className: 'dark-tiles',
+            minZoom: 2,
+            maxNativeZoom: 18,
             maxZoom: 20
         }).addTo(map);
 

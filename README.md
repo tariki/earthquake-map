@@ -51,7 +51,7 @@
     
 *   **Styling**: Tailwind CSS (CDNによるレスポンシブデザイン)
     
-*   **Map Utility**: Leaflet.js (CartoDB Dark Themeタイル)
+*   **Map Utility**: Leaflet.js (国土地理院 地理院タイル「淡色地図」をCSSフィルタでダーク化)
     
 *   **Generative AI**: Gemini 2.5 Flash API (`generativelanguage.googleapis.com`)
     
