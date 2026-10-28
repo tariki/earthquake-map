@@ -71,7 +71,7 @@
             </div>
             <h1 class="text-xl font-bold tracking-tight text-white">震度5以上 プロットマップ</h1>
             <p class="text-xs text-slate-400 mt-1 leading-relaxed">
-                P2P地震情報APIと自動同期。2026年以降の国内震央データをリアルタイムに検出・自動重複回避配置します。
+                P2P地震情報APIと自動同期。2026年以降の国内震央データを1日2回自動で取得・重複回避配置します。
             </p>
         </div>
 
@@ -133,7 +133,7 @@
                 </div>
                 <div id="ai-output" class="flex-1 p-3 text-xs leading-relaxed overflow-y-auto max-h-[350px] space-y-2">
                     <p class="text-slate-500">
-                        タイムラインの各震源地にある「✨ AI詳細分析」をクリックするか、下の「✨ 地震活動レポートを生成」ボタンを押すと、Gemini 2.5 Flashが2026年からの最新データに基づき、即座に防災状況の解説を生成します。
+                        タイムラインの各震源地にある「✨ AI詳細分析」をクリックするか、下の「✨ 地震活動レポートを生成」ボタンを押すと、Gemini Flashが2026年からの最新データに基づき、即座に防災状況の解説を生成します。
                     </p>
                 </div>
             </div>
@@ -160,7 +160,7 @@
         <!-- フッター -->
         <div class="p-4 border-t border-slate-800 bg-slate-950/40 text-center text-[10px] text-slate-500">
             <div>
-                データ参照: <a href="https://earthquake.tenki.jp/bousai/earthquake/entries/" target="_blank" class="hover:underline text-slate-400">日本気象協会 tenki.jp</a>
+                データ参照: <a href="https://www.p2pquake.net/" target="_blank" class="hover:underline text-slate-400">P2P地震情報</a>（気象庁発表の地震情報）
             </div>
             <div class="mt-1 text-slate-400">© 2026 Tomohiko Ariki. Licensed under the MIT License.</div>
         </div>
@@ -835,7 +835,7 @@ ${JSON.stringify(earthquakeData, null, 2)}
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    <span class="text-xs text-slate-400">Gemini 2.5 Flash が考え中...</span>
+                    <span class="text-xs text-slate-400">Gemini Flash が考え中...</span>
                     <span class="text-[10px] text-slate-600 mt-1">${statusText}を実行しています</span>
                 </div>
             `;
