@@ -1,11 +1,11 @@
 # アーキテクチャ設計: AI機能のサーバー化（Cloud Run + Secret Manager）
 
-* ステータス: 設計確定・未実装（2026-11-12）
+* ステータス: 実装済み・Cloud Run 未デプロイ（2026-11-12）
 * 目的: Gemini APIキーをコードやブラウザに置かずに Cloud Run で公開し、ダウンロードした HTML でもローカルで使えるようにする
 
 ## 背景
 
-現在は `earthquake_map.html` の `callGeminiAPI` 内に `const apiKey = ""` があり、キーを書き込むとページを閲覧できる人は誰でもキーを読み取れる。公開にあたってキーを外部から参照できない構成にする。
+変更前は `earthquake_map.html` の `callGeminiAPI` 内に `const apiKey = ""` があり、キーを書き込むとページを閲覧できる人は誰でもキーを読み取れる。公開にあたってキーを外部から参照できない構成にする。
 
 ## 利用形態
 
@@ -136,17 +136,26 @@ Cloud Billing の「spend cap」タイプの予算を使い、月の支出が上
 
 ```text
 earthquake-map/
-├── earthquake_map.html   # 変更（AI呼び出しの切り替え、BYOK入力欄）。1ファイルで動く点は維持
+├── web/
+│   └── earthquake_map.html  # 画面（AI呼び出しの切り替え、BYOK入力欄）。1ファイルで動く点は維持
 ├── server/
-│   ├── main.py           # FastAPI（配信、/api/ai、地震データ取得、回数制限）
-│   └── requirements.txt  # fastapi, uvicorn, httpx, google-genai
-├── Dockerfile            # Cloud Run 用（HTML と server/ をまとめる）
+│   ├── main.py              # FastAPI（配信、/api/ai、地震データ取得、回数制限）
+│   └── requirements.txt     # fastapi, uvicorn, httpx, google-genai
+├── tests/
+│   ├── test_server.py       # サーバーのスモークテスト（キー・ネットワーク不要）
+│   ├── test_browser.py      # ブラウザのスモークテスト（Playwright、-m browser で実行）
+│   └── requirements.txt     # テスト用（pytest, playwright）
+├── .github/workflows/test.yml  # push / PR でサーバーのテストを自動実行
+├── Dockerfile               # Cloud Run 用（web/ と server/ をまとめる）
+├── pyproject.toml           # pytest の設定
 ├── .dockerignore
-├── .gitignore            # .env などを除外
-├── docs/architecture.md  # 本ドキュメント
-├── README.md             # 使い方①②③、デプロイ手順、Secret Manager の設定
+├── .gitignore               # .env などを除外
+├── docs/architecture.md     # 本ドキュメント
+├── README.md                # 使い方①②③、デプロイ手順、テストの実行方法
 └── LICENSE
 ```
+
+* 画面（`web/`）とサーバー（`server/`）をディレクトリで分け、役割を明確にする。HTML はダウンロードして直接開けるよう、ファイル名を `earthquake_map.html` のまま維持する。
 
 * Gemini 呼び出しは公式 SDK `google-genai` を使う。モデルは `gemini-flash-latest`（環境変数 `GEMINI_MODEL` で変更可能）。
 * 将来 Vertex AI に移行する場合は、SDK の初期化を `vertexai=True` に変え、サービスアカウントに `roles/aiplatform.user` を付与する。APIキーと Secret Manager は不要になる。
@@ -168,4 +177,8 @@ earthquake-map/
 
 1. 作業用ブランチで実装する。
 2. ②ローカルサーバーと③`file://` で動作確認する。
-3. 確認後にコミットする。Cloud Run への実デプロイ（`gcloud` 実行）は利用者の Google Cloud プロジェクトで行うため、手順の案内までとする。
+3. 確認内容をスモークテストとして残す。
+   * サーバー（`tests/test_server.py`）: Gemini と P2P地震情報を偽物に置き換え、キーもネットワークも使わずに数秒で実行する。GitHub Actions で push / PR ごとに自動実行する。
+   * ブラウザ（`tests/test_browser.py`）: Playwright で `http(s)://` と `file://` の切り替え、BYOK、HTML エスケープを確認する。Gemini への通信は横取りして偽の応答を返す。CDN の読み込みにインターネット接続が必要なため、`pytest -m browser` で明示的に実行する。
+   * 本物の Gemini を呼ぶ確認は費用とキーが必要なため、自動テストに含めず手動で行う。
+4. 確認後にコミットする。Cloud Run への実デプロイ（`gcloud` 実行）は利用者の Google Cloud プロジェクトで行うため、手順の案内までとする。

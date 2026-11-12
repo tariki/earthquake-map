@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# ブラウザのテストは CDN の読み込みにネットワークが必要なため、既定では実行しない（pytest -m browser で実行）
+addopts = '-m "not browser"'
+markers = [
+    "browser: Playwright で実際のブラウザを動かすテスト",
+]

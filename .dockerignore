@@ -1,0 +1,14 @@
+.git
+.gitignore
+.dockerignore
+.env
+.env.*
+.venv
+venv
+**/__pycache__
+docs
+README.md
+tests
+.github
+.pytest_cache
+pyproject.toml

@@ -122,7 +122,29 @@
 
         <!-- AI防災分析セクション（初期は非表示） -->
         <div id="section-ai" class="flex-1 overflow-y-auto p-4 space-y-4 hidden flex flex-col">
-            
+
+            <!-- Gemini APIキー設定（file:// で開いたときだけ表示） -->
+            <div id="byok-panel" class="hidden shrink-0 bg-slate-950/70 border border-slate-800/80 rounded-lg p-3 space-y-2 text-[11px]">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-slate-200">🔑 Gemini APIキー（ローカル利用）</span>
+                    <span id="byok-status" class="text-[10px] text-slate-500">未設定</span>
+                </div>
+                <p class="text-[10px] text-slate-400 leading-relaxed">
+                    ローカルでAI機能を使うには、ご自身のAPIキーを入力してください。キーは
+                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" class="text-emerald-400 hover:underline">Google AI Studio</a>
+                    で取得できます。キーはこのブラウザ内にだけ保存され、Gemini API以外には送信されません。
+                </p>
+                <div class="flex gap-1.5">
+                    <input id="byok-input" type="password" autocomplete="off" placeholder="AIza..." class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/80">
+                    <button id="byok-save" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 rounded-lg text-xs font-bold transition-colors">保存</button>
+                    <button id="byok-clear" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white px-3 rounded-lg text-xs font-bold transition-colors">削除</button>
+                </div>
+                <label class="flex items-center gap-1.5 text-[10px] text-slate-400">
+                    <input id="byok-remember" type="checkbox" class="accent-emerald-500">
+                    このブラウザに保存する（チェックしない場合はタブを閉じると消えます）
+                </label>
+            </div>
+
             <!-- AIアウトプット表示部分 -->
             <div class="flex-1 min-h-[220px] flex flex-col bg-slate-950/70 border border-slate-800/80 rounded-lg overflow-hidden">
                 <div class="bg-slate-900 px-3 py-2 border-b border-slate-800/80 flex justify-between items-center shrink-0">
@@ -149,7 +171,7 @@
             <div class="border-t border-slate-800/80 pt-3 shrink-0">
                 <div class="text-[10px] text-slate-400 mb-1">AIに防災の質問をする（例: 「家具の固定方法は？」「余震への備えは？」）</div>
                 <div class="flex gap-1.5">
-                    <input id="ai-chat-input" type="text" placeholder="防災の疑問を入力..." class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/80">
+                    <input id="ai-chat-input" type="text" maxlength="500" placeholder="防災の疑問を入力..." class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/80">
                     <button id="btn-send-chat" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white px-3 rounded-lg text-xs font-bold transition-colors">
                         送信
                     </button>
@@ -767,11 +789,105 @@
 
         // ----------------- Gemini API 連携ロジック -----------------
 
-        // 指数バックオフ付きAPI呼び出し
+        // http(s):// ではサーバー（/api/ai）経由、file:// では利用者のキーで Gemini を直接呼ぶ
+        const isLocalFile = location.protocol === "file:";
+        const BYOK_STORAGE_KEY = "geminiApiKey";
+
+        function loadApiKey() {
+            try {
+                return localStorage.getItem(BYOK_STORAGE_KEY) || sessionStorage.getItem(BYOK_STORAGE_KEY) || "";
+            } catch (e) {
+                return "";
+            }
+        }
+
+        function saveApiKey(key, remember) {
+            clearApiKey();
+            try {
+                (remember ? localStorage : sessionStorage).setItem(BYOK_STORAGE_KEY, key);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function clearApiKey() {
+            try { localStorage.removeItem(BYOK_STORAGE_KEY); } catch (e) {}
+            try { sessionStorage.removeItem(BYOK_STORAGE_KEY); } catch (e) {}
+        }
+
+        // APIキー設定欄（file:// で開いたときだけ表示）
+        function setupByokPanel() {
+            if (!isLocalFile) return;
+            const panel = document.getElementById("byok-panel");
+            const input = document.getElementById("byok-input");
+            const remember = document.getElementById("byok-remember");
+            const status = document.getElementById("byok-status");
+
+            const refreshStatus = () => {
+                const saved = loadApiKey();
+                status.textContent = saved ? "設定済み" : "未設定";
+                status.className = saved ? "text-[10px] text-emerald-400 font-bold" : "text-[10px] text-slate-500";
+            };
+
+            panel.classList.remove("hidden");
+            try { remember.checked = !!localStorage.getItem(BYOK_STORAGE_KEY); } catch (e) {}
+            refreshStatus();
+
+            document.getElementById("byok-save").addEventListener("click", () => {
+                const key = input.value.trim();
+                if (!key) return;
+                if (!saveApiKey(key, remember.checked)) {
+                    status.textContent = "保存できませんでした";
+                    status.className = "text-[10px] text-rose-500 font-bold";
+                    return;
+                }
+                input.value = "";
+                refreshStatus();
+            });
+
+            document.getElementById("byok-clear").addEventListener("click", () => {
+                clearApiKey();
+                input.value = "";
+                remember.checked = false;
+                refreshStatus();
+            });
+        }
+
+        setupByokPanel();
+
+        // AI機能の呼び出し窓口。request はサーバーに送る内容、localPrompt は file:// で使うプロンプト
+        async function requestAI(request, localPrompt) {
+            return isLocalFile ? callGeminiAPI(localPrompt) : callServerAI(request);
+        }
+
+        async function callServerAI(request) {
+            let response;
+            try {
+                response = await fetch("/api/ai", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(request)
+                });
+            } catch (e) {
+                throw new Error("サーバーに接続できませんでした。");
+            }
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                const detail = typeof result.detail === "string" ? result.detail : "入力内容を確認してください。";
+                throw new Error(detail);
+            }
+            return result.text;
+        }
+
+        // 指数バックオフ付きAPI呼び出し（file:// で開いたときに利用者のキーで直接呼ぶ）
         async function callGeminiAPI(userQuery) {
-            const apiKey = ""; 
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${urlApiKey(apiKey)}`;
-            
+            const apiKey = loadApiKey();
+            if (!apiKey) {
+                throw new Error("Gemini APIキーが設定されていません。上の欄にキーを入力して保存してください。");
+            }
+            const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
+
             const systemPrompt = `あなたは優秀な防災専門家および地震学者「防災AIアシスタント」です。
 ユーザーから提供された「2026年以降の震度5以上の地震データ」を前提知識として持っています。
 回答は必ず日本語で行い、専門的でありながら一般市民にとって分かりやすく、かつ極めて実践的な防災アドバイスを交えて回答してください。
@@ -788,32 +904,34 @@ ${JSON.stringify(earthquakeData, null, 2)}
 
             let delay = 1000;
             for (let i = 0; i < 5; i++) {
-                try {
-                    const response = await fetch(url, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(payload)
-                    });
-                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+                    body: JSON.stringify(payload)
+                }).catch(() => null);
+                if (response && response.ok) {
                     const result = await response.json();
                     const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (text) return text;
-                    throw new Error("No text returned from API");
-                } catch (error) {
-                    if (i === 4) throw error; 
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                    delay *= 2; 
                 }
+                // キーの誤りなど 429 以外の 4xx は再試行しても回復しない
+                if (response && response.status >= 400 && response.status < 500 && response.status !== 429) {
+                    throw new Error(`Gemini APIがエラーを返しました（HTTP ${response.status}）。APIキーが正しいか確認してください。`);
+                }
+                if (i === 4) {
+                    throw new Error(response ? `Gemini APIの呼び出しに失敗しました（HTTP ${response.status}）。` : "Gemini APIに接続できませんでした。");
+                }
+                await new Promise(resolve => setTimeout(resolve, delay));
+                delay *= 2;
             }
         }
 
-        function urlApiKey(key) {
-            return key ? key : "";
-        }
-
-        // マークダウン簡易レンダラー
+        // マークダウン簡易レンダラー（AIの出力に含まれるHTMLはエスケープしてから整形する）
         function renderMarkdown(text) {
             return text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
                 .replace(/`([^`]+)`/g, '<code class="bg-slate-900 px-1 py-0.5 rounded text-rose-400 font-mono">$1</code>')
@@ -851,7 +969,6 @@ ${JSON.stringify(earthquakeData, null, 2)}
                 <div class="p-3 bg-rose-950/40 border border-rose-800 text-rose-300 rounded-lg text-xs space-y-2">
                     <p class="font-bold">⚠️ 解析エラーが発生しました</p>
                     <p class="text-[10px] text-rose-400">${msg}</p>
-                    <p class="text-[10px] text-slate-400">しばらく時間をおいて再試行してください。</p>
                 </div>
             `;
         }
@@ -878,7 +995,7 @@ ${JSON.stringify(earthquakeData, null, 2)}
 全体で450〜600文字程度で、分かりやすいビジネス/アカデミック報告スタイルで作成してください。`;
 
             try {
-                const responseText = await callGeminiAPI(prompt);
+                const responseText = await requestAI({ task: "report" }, prompt);
                 displayAIResult(responseText, "全体レポート完了");
             } catch (error) {
                 showError(error.message);
@@ -911,8 +1028,13 @@ ${JSON.stringify(earthquakeData, null, 2)}
                 }, 300);
             }
 
+            const request = {
+                task: "analyze",
+                earthquake: { time: eq.time, location: eq.location, m: eq.m, shindo: eq.shindo, lat: eq.lat, lng: eq.lng }
+            };
+
             try {
-                const responseText = await callGeminiAPI(prompt);
+                const responseText = await requestAI(request, prompt);
                 displayAIResult(responseText, "個別震源分析完了");
             } catch (error) {
                 showError(error.message);
@@ -929,7 +1051,7 @@ ${JSON.stringify(earthquakeData, null, 2)}
             showLoading("質問に回答中");
 
             try {
-                const responseText = await callGeminiAPI(query);
+                const responseText = await requestAI({ task: "chat", message: query }, query);
                 displayAIResult(responseText, "チャット回答完了");
             } catch (error) {
                 showError(error.message);

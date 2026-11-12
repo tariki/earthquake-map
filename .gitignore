@@ -1,0 +1,10 @@
+# APIキーなどを書いたローカル用の設定ファイル
+.env
+.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
