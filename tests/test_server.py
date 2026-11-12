@@ -133,6 +133,46 @@ def test_client_error_is_not_retried_and_hides_details(fake_gemini):
     assert len(fake_gemini.calls) == 1
 
 
+def deadline():
+    return genai_errors.ServerError(504, {"error": {"message": "Deadline expired"}})
+
+
+def test_deadline_exceeded_goes_straight_to_fallback(fake_gemini):
+    fake_gemini.responses = [deadline(), "予備のモデルの回答"]
+    response = post_ai({"task": "report"})
+    assert response.status_code == 200
+    assert response.json() == {"text": "予備のモデルの回答"}
+    # 時間切れの後は同じモデルで再試行せず、すぐ予備のモデルに切り替える
+    assert [c["model"] for c in fake_gemini.calls] == [main.GEMINI_MODEL, main.GEMINI_FALLBACK_MODEL]
+
+
+def test_deadline_exceeded_on_both_models(fake_gemini):
+    fake_gemini.responses = [deadline(), deadline()]
+    response = post_ai({"task": "report"})
+    assert response.status_code == 504
+    assert response.json()["detail"] == main.MSG_TIMEOUT
+    assert len(fake_gemini.calls) == 2
+
+
+def test_deadline_exceeded_without_fallback_is_not_retried(fake_gemini, monkeypatch):
+    monkeypatch.setattr(main, "GEMINI_FALLBACK_MODEL", "")
+    fake_gemini.responses = [deadline()]
+    response = post_ai({"task": "report"})
+    assert response.status_code == 504
+    assert len(fake_gemini.calls) == 1
+
+
+def test_thinking_level_is_sent(fake_gemini):
+    post_ai({"task": "report"})
+    assert fake_gemini.calls[0]["config"].thinking_config.thinking_level == "LOW"
+
+
+def test_thinking_level_can_be_omitted(fake_gemini, monkeypatch):
+    monkeypatch.setattr(main, "_thinking_config", None)
+    post_ai({"task": "report"})
+    assert fake_gemini.calls[0]["config"].thinking_config is None
+
+
 def test_server_error_is_retried(fake_gemini):
     fake_gemini.responses = [genai_errors.ServerError(503, {"error": {"message": "overloaded"}}), "再試行で成功"]
     response = post_ai({"task": "report"})
@@ -145,7 +185,52 @@ def test_server_error_gives_up_after_three_attempts(fake_gemini):
     fake_gemini.responses = [genai_errors.ServerError(500, {"error": {"message": "internal"}})] * 3
     response = post_ai({"task": "report"})
     assert response.status_code == 502
+    assert response.json()["detail"] == main.MSG_UNAVAILABLE
     assert len(fake_gemini.calls) == 3
+
+
+def busy():
+    return genai_errors.ServerError(503, {"error": {"message": "high demand"}})
+
+
+def test_falls_back_to_lite_model_when_busy(fake_gemini):
+    fake_gemini.responses = [busy(), busy(), "予備のモデルの回答"]
+    response = post_ai({"task": "report"})
+    assert response.status_code == 200
+    assert response.json() == {"text": "予備のモデルの回答"}
+    assert [c["model"] for c in fake_gemini.calls] == [main.GEMINI_MODEL, main.GEMINI_MODEL, main.GEMINI_FALLBACK_MODEL]
+
+
+def test_busy_message_when_all_attempts_are_busy(fake_gemini):
+    fake_gemini.responses = [busy(), busy(), busy()]
+    response = post_ai({"task": "report"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == main.MSG_BUSY
+
+
+def test_fallback_can_be_disabled(fake_gemini, monkeypatch):
+    monkeypatch.setattr(main, "GEMINI_FALLBACK_MODEL", "")
+    fake_gemini.responses = [busy(), busy(), busy()]
+    post_ai({"task": "report"})
+    assert [c["model"] for c in fake_gemini.calls] == [main.GEMINI_MODEL] * 3
+
+
+def test_retry_budget_skips_same_model_retry_but_tries_fallback(fake_gemini, monkeypatch):
+    monkeypatch.setattr(main, "RETRY_BUDGET_SECONDS", 0)
+    fake_gemini.responses = [busy(), "予備のモデルの回答"]
+    response = post_ai({"task": "report"})
+    assert response.status_code == 200
+    assert [c["model"] for c in fake_gemini.calls] == [main.GEMINI_MODEL, main.GEMINI_FALLBACK_MODEL]
+
+
+def test_retry_budget_without_fallback_stops_retries(fake_gemini, monkeypatch):
+    monkeypatch.setattr(main, "RETRY_BUDGET_SECONDS", 0)
+    monkeypatch.setattr(main, "GEMINI_FALLBACK_MODEL", "")
+    fake_gemini.responses = [busy(), "使われない回答"]
+    response = post_ai({"task": "report"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == main.MSG_BUSY
+    assert len(fake_gemini.calls) == 1
 
 
 def test_missing_api_key_returns_503(monkeypatch):

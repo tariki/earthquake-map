@@ -29,12 +29,19 @@ logger = logging.getLogger("earthquake-map")
 # ----------------- 設定（環境変数で変更可能） -----------------
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+# 混雑や時間切れで GEMINI_MODEL が失敗したときに1回だけ試す予備のモデル。空にすると使わない
+GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.6-flash").strip()
 MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "4096"))
+# SDK はこの値を X-Server-Timeout ヘッダーで Gemini にも送るため、超えると Gemini 側で打ち切られる（504）
 GEMINI_TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS", "60000"))
+# Gemini 3 系の「考える深さ」（MINIMAL / LOW / MEDIUM / HIGH）。空にするとモデルの既定値を使う
+GEMINI_THINKING_LEVEL = os.environ.get("GEMINI_THINKING_LEVEL", "LOW").strip().upper()
 RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "10"))
 QUAKE_CACHE_SECONDS = int(os.environ.get("QUAKE_CACHE_SECONDS", "600"))
 RETRY_BASE_DELAY = float(os.environ.get("RETRY_BASE_DELAY", "1.0"))
+# 最初の呼び出しからこの秒数を過ぎたら同じモデルでは再試行しない（利用者を長く待たせないため）
+RETRY_BUDGET_SECONDS = float(os.environ.get("RETRY_BUDGET_SECONDS", "30"))
 HTML_PATH = Path(os.environ.get("HTML_PATH", Path(__file__).resolve().parent.parent / "web" / "earthquake_map.html"))
 
 P2P_QUAKE_URL = "https://api.p2pquake.net/v2/jma/quake?limit=100&since_date=20260101&min_scale=45"
@@ -43,8 +50,10 @@ SCALE_CLASS_MAP = {45: "5-minus", 50: "5-plus", 55: "6-minus", 60: "6-plus", 70:
 
 # 利用者に返すメッセージ（詳細はサーバーログにだけ残す）
 MSG_UNAVAILABLE = "AI機能は現在利用できません。しばらく時間をおいて再試行してください。"
-MSG_QUOTA = "AI機能は一時的に利用できません（今月の利用上限に達した可能性があります）。"
+MSG_QUOTA = "AIの利用上限（回数または金額）に達しました。時間をおいて再試行してください。"
 MSG_RATE_LIMITED = "リクエストが多すぎます。1分ほど待ってから再試行してください。"
+MSG_TIMEOUT = "AIの回答に時間がかかりすぎたため中断しました。もう一度お試しください。"
+MSG_BUSY = "AIが混み合っています。少し時間をおいて再試行してください。"
 
 SYSTEM_PROMPT_TEMPLATE = """あなたは優秀な防災専門家および地震学者「防災AIアシスタント」です。
 ユーザーから提供された「2026年以降の震度5以上の地震データ」を前提知識として持っています。
@@ -179,8 +188,14 @@ def is_rate_limited(ip: str) -> bool:
 
 _gemini_client = genai.Client(
     api_key=GEMINI_API_KEY,
-    http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+    # ブラウザから直接呼ぶ場合（file://）と同じ v1beta を使う
+    http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS, api_version="v1beta"),
 ) if GEMINI_API_KEY else None
+
+# 設定値の誤りは起動時にエラーにする（SDK は存在しないレベルもそのまま受け付けてしまう）
+if GEMINI_THINKING_LEVEL not in ("", "MINIMAL", "LOW", "MEDIUM", "HIGH"):
+    raise ValueError(f"GEMINI_THINKING_LEVEL が不正です: {GEMINI_THINKING_LEVEL}（MINIMAL / LOW / MEDIUM / HIGH または空）")
+_thinking_config = types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL) if GEMINI_THINKING_LEVEL else None
 
 
 async def call_gemini(prompt: str, earthquakes: list[dict]) -> str:
@@ -188,28 +203,57 @@ async def call_gemini(prompt: str, earthquakes: list[dict]) -> str:
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         max_output_tokens=MAX_OUTPUT_TOKENS,
+        thinking_config=_thinking_config,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
 
+    # 本来のモデルで2回試し、最後は予備のモデルを使う（予備がなければ本来のモデルで3回）
+    models = [GEMINI_MODEL, GEMINI_MODEL, GEMINI_FALLBACK_MODEL or GEMINI_MODEL]
+    first_started = time.monotonic()
     delay = RETRY_BASE_DELAY
-    for attempt in range(3):
+    last_error_code = None
+
+    for attempt, model in enumerate(models):
+        is_fallback = bool(GEMINI_FALLBACK_MODEL) and attempt == len(models) - 1
+        if attempt > 0 and not is_fallback:
+            # 同じモデルでの再試行。時間切れの後（同じく時間切れになるため）や、待ち時間の上限を超える場合は行わない
+            if last_error_code == 504 or time.monotonic() - first_started + delay > RETRY_BUDGET_SECONDS:
+                continue
+            await asyncio.sleep(delay)
+            delay *= 2
+
+        started = time.monotonic()
         try:
-            response = await _gemini_client.aio.models.generate_content(
-                model=GEMINI_MODEL, contents=prompt, config=config
-            )
-            if response.text:
-                return response.text
-            logger.warning("Gemini から空の応答が返りました: %s", response)
-            raise HTTPException(status_code=502, detail=MSG_UNAVAILABLE)
+            response = await _gemini_client.aio.models.generate_content(model=model, contents=prompt, config=config)
         except genai_errors.APIError as error:
-            logger.error("Gemini API エラー (code=%s): %s", error.code, error.message)
+            logger.error("Gemini API エラー (%s, code=%s, %.1f秒): %s", model, error.code, time.monotonic() - started, error.message)
             if error.code == 429:
-                # spend cap やティア上限による停止を含む。再試行しても回復しない
+                # spend cap や無料枠の回数制限による停止。再試行しても回復しない
                 raise HTTPException(status_code=503, detail=MSG_QUOTA) from error
-            if error.code < 500 or attempt == 2:
+            if error.code < 500:
                 raise HTTPException(status_code=502, detail=MSG_UNAVAILABLE) from error
-        await asyncio.sleep(delay)
-        delay *= 2
+            last_error_code = error.code
+            continue
+
+        usage = getattr(response, "usage_metadata", None)
+        logger.info(
+            "Gemini 応答 (%s): %.1f秒 (思考 %s / 出力 %s トークン)",
+            model,
+            time.monotonic() - started,
+            getattr(usage, "thoughts_token_count", None),
+            getattr(usage, "candidates_token_count", None),
+        )
+        if response.text:
+            return response.text
+        finish_reason = response.candidates[0].finish_reason if getattr(response, "candidates", None) else None
+        logger.warning("Gemini から空の応答が返りました (finish_reason=%s)", finish_reason)
+        raise HTTPException(status_code=502, detail=MSG_UNAVAILABLE)
+
+    # 混雑（503）や時間切れ（504）で失敗した場合はその旨を伝える
+    if last_error_code == 503:
+        raise HTTPException(status_code=503, detail=MSG_BUSY)
+    if last_error_code == 504:
+        raise HTTPException(status_code=504, detail=MSG_TIMEOUT)
     raise HTTPException(status_code=502, detail=MSG_UNAVAILABLE)
 
 

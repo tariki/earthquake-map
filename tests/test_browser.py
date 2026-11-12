@@ -137,7 +137,49 @@ def test_file_mode_sends_key_in_header(page: Page):
     request = captured[0]
     assert request.headers["x-goog-api-key"] == DUMMY_KEY
     assert "key=" not in request.url  # キーを URL に含めない
-    assert json.loads(request.post_data)["contents"][0]["parts"][0]["text"] == "家具の固定方法は？"
+    payload = json.loads(request.post_data)
+    assert payload["contents"][0]["parts"][0]["text"] == "家具の固定方法は？"
+    assert payload["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "LOW"
+
+
+def test_file_mode_falls_back_to_lite_model_when_busy(page: Page):
+    urls = []
+
+    def handle(route):
+        urls.append(route.request.url)
+        if len(urls) < 3:
+            route.fulfill(status=503, json={})
+        else:
+            route.fulfill(json=gemini_response("予備のモデルの回答"))
+
+    page.route(GEMINI_URL_PATTERN, handle)
+    open_ai_tab(page, HTML_FILE_URL)
+    page.fill("#byok-input", DUMMY_KEY)
+    page.click("#byok-save")
+    send_chat(page)
+    expect(page.locator("#ai-output")).to_contain_text("予備のモデルの回答", timeout=10000)
+    models = [url.split("/models/")[1].split(":")[0] for url in urls]
+    assert models == [main.GEMINI_MODEL, main.GEMINI_MODEL, main.GEMINI_FALLBACK_MODEL]
+
+
+def test_file_mode_deadline_goes_straight_to_fallback(page: Page):
+    urls = []
+
+    def handle(route):
+        urls.append(route.request.url)
+        if len(urls) == 1:
+            route.fulfill(status=504, json={})
+        else:
+            route.fulfill(json=gemini_response("予備のモデルの回答"))
+
+    page.route(GEMINI_URL_PATTERN, handle)
+    open_ai_tab(page, HTML_FILE_URL)
+    page.fill("#byok-input", DUMMY_KEY)
+    page.click("#byok-save")
+    send_chat(page)
+    expect(page.locator("#ai-output")).to_contain_text("予備のモデルの回答")
+    models = [url.split("/models/")[1].split(":")[0] for url in urls]
+    assert models == [main.GEMINI_MODEL, main.GEMINI_FALLBACK_MODEL]
 
 
 def test_file_mode_invalid_key_is_not_retried(page: Page):

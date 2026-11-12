@@ -880,13 +880,18 @@
             return result.text;
         }
 
+        // サーバーの GEMINI_MODEL / GEMINI_FALLBACK_MODEL / GEMINI_TIMEOUT_MS / RETRY_BUDGET_SECONDS の既定値と同じ
+        const GEMINI_MODEL = "gemini-3.5-flash-lite";
+        const GEMINI_FALLBACK_MODEL = "gemini-3.6-flash";
+        const GEMINI_TIMEOUT_MS = 60000;
+        const RETRY_BUDGET_MS = 30000;
+
         // 指数バックオフ付きAPI呼び出し（file:// で開いたときに利用者のキーで直接呼ぶ）
         async function callGeminiAPI(userQuery) {
             const apiKey = loadApiKey();
             if (!apiKey) {
                 throw new Error("Gemini APIキーが設定されていません。上の欄にキーを入力して保存してください。");
             }
-            const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
 
             const systemPrompt = `あなたは優秀な防災専門家および地震学者「防災AIアシスタント」です。
 ユーザーから提供された「2026年以降の震度5以上の地震データ」を前提知識として持っています。
@@ -899,31 +904,67 @@ ${JSON.stringify(earthquakeData, null, 2)}
 
             const payload = {
                 contents: [{ parts: [{ text: userQuery }] }],
-                systemInstruction: { parts: [{ text: systemPrompt }] }
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                // 回答の速さを優先し、考える深さを抑える（サーバーの GEMINI_THINKING_LEVEL の既定値と同じ）
+                generationConfig: { thinkingConfig: { thinkingLevel: "LOW" } }
             };
 
+            // 本来のモデルで2回試し、最後に予備のモデルを1回試す
+            const models = [GEMINI_MODEL, GEMINI_MODEL, GEMINI_FALLBACK_MODEL];
+            const firstStarted = Date.now();
             let delay = 1000;
-            for (let i = 0; i < 5; i++) {
-                const response = await fetch(url, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-                    body: JSON.stringify(payload)
-                }).catch(() => null);
-                if (response && response.ok) {
+            let lastStatus = null;  // null は接続できなかった場合、504 は時間切れ
+
+            for (let i = 0; i < models.length; i++) {
+                const isFallback = i === models.length - 1;
+                if (i > 0 && !isFallback) {
+                    // 同じモデルでの再試行。時間切れの後や、待ち時間の上限を超える場合は行わない
+                    if (lastStatus === 504 || Date.now() - firstStarted + delay > RETRY_BUDGET_MS) continue;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                }
+
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${models[i]}:generateContent`;
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+                let response = null;
+                try {
+                    response = await fetch(url, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+                        body: JSON.stringify(payload),
+                        signal: controller.signal
+                    });
+                } catch (e) {
+                    lastStatus = e.name === "AbortError" ? 504 : null;
+                    continue;
+                } finally {
+                    clearTimeout(timer);
+                }
+
+                if (response.ok) {
                     const result = await response.json();
                     const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (text) return text;
+                    throw new Error("Gemini APIから回答が得られませんでした。");
                 }
-                // キーの誤りなど 429 以外の 4xx は再試行しても回復しない
-                if (response && response.status >= 400 && response.status < 500 && response.status !== 429) {
+                if (response.status === 429) {
+                    throw new Error("Gemini APIの利用上限（回数または金額）に達しました。時間をおいて再試行してください。");
+                }
+                // キーの誤りなどの 4xx は再試行しても回復しない
+                if (response.status >= 400 && response.status < 500) {
                     throw new Error(`Gemini APIがエラーを返しました（HTTP ${response.status}）。APIキーが正しいか確認してください。`);
                 }
-                if (i === 4) {
-                    throw new Error(response ? `Gemini APIの呼び出しに失敗しました（HTTP ${response.status}）。` : "Gemini APIに接続できませんでした。");
-                }
-                await new Promise(resolve => setTimeout(resolve, delay));
-                delay *= 2;
+                lastStatus = response.status;
             }
+
+            if (lastStatus === 503) {
+                throw new Error("AIが混み合っています。少し時間をおいて再試行してください。");
+            }
+            if (lastStatus === 504) {
+                throw new Error("AIの回答に時間がかかりすぎたため中断しました。もう一度お試しください。");
+            }
+            throw new Error(lastStatus ? `Gemini APIの呼び出しに失敗しました（HTTP ${lastStatus}）。` : "Gemini APIに接続できませんでした。");
         }
 
         // マークダウン簡易レンダラー（AIの出力に含まれるHTMLはエスケープしてから整形する）

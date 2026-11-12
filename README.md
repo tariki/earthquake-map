@@ -2,7 +2,7 @@
 
 本プロジェクトは、2026年以降に日本国内で発生した最大震度5弱以上の地震データを、インタラクティブな日本地図上にビジュアルマッピングした高機能Webアプリケーションです。
 
-「漏れなく、ダブりなく」データを可視化する独自の重複回避表示システムや、**Gemini Flash API（最新版）**を活用した高度なAI防災トレンド分析、APIとの自動同期（1日2回）機能を1つのHTMLファイルに凝縮しています。Cloud Run で公開するための Python サーバーも同梱しており、Gemini APIキーをブラウザに渡さずにAI機能を提供できます。
+「漏れなく、ダブりなく」データを可視化する独自の重複回避表示システムや、**Gemini Flash API**を活用した高度なAI防災トレンド分析、APIとの自動同期（1日2回）機能を1つのHTMLファイルに凝縮しています。Cloud Run で公開するための Python サーバーも同梱しており、Gemini APIキーをブラウザに渡さずにAI機能を提供できます。
 
 ## 💥 主な機能
 
@@ -50,7 +50,7 @@
 
 * **Backend**: Python 3.12 / FastAPI（AI機能の中継、Cloud Run で実行）
 
-* **Generative AI**: Gemini Flash API（最新版エイリアス `gemini-flash-latest`、公式SDK `google-genai`）
+* **Generative AI**: Gemini API（安定版 `gemini-3.5-flash-lite`、混雑・時間切れ時の予備 `gemini-3.6-flash`、公式SDK `google-genai`）
 
 * **Data Source API**: P2P地震情報 API
 
@@ -134,7 +134,11 @@ gcloud run deploy earthquake-map \
 | 変数 | 既定値 | 内容 |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | （必須） | Gemini APIキー。Cloud Run では Secret Manager から渡す |
-| `GEMINI_MODEL` | `gemini-flash-latest` | 使用するモデル |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | 使用するモデル |
+| `GEMINI_FALLBACK_MODEL` | `gemini-3.6-flash` | 混雑や時間切れで失敗したときに1回だけ試す予備のモデル。空にすると使わない |
+| `GEMINI_THINKING_LEVEL` | `LOW` | 回答前に考える深さ（`MINIMAL` / `LOW` / `MEDIUM` / `HIGH`）。深いほど回答に時間がかかる。空にするとモデルの既定値。モデルによっては `MINIMAL` に非対応 |
+| `GEMINI_TIMEOUT_MS` | `60000` | 1回の呼び出しで Gemini の回答を待つ最大時間（ミリ秒）。超えると Gemini 側でも打ち切られる |
+| `RETRY_BUDGET_SECONDS` | `30` | 最初の呼び出しからこの秒数を過ぎたら、同じモデルでは再試行しない（予備のモデルは試す） |
 | `MAX_OUTPUT_TOKENS` | `4096` | 1回の回答の最大トークン数 |
 | `RATE_LIMIT_PER_MINUTE` | `10` | 接続元IPごとの1分あたりのAIリクエスト上限 |
 | `QUAKE_CACHE_SECONDS` | `600` | サーバーが取得した地震データのキャッシュ時間（秒） |
@@ -144,6 +148,17 @@ gcloud run deploy earthquake-map \
 >
 > * APIキーを HTML やソースコードに書き込んでコミット・公開しないでください。
 > * ローカルでキーをファイルに保存する場合は `.env` などを使ってください（`.gitignore` で除外済み）。
+
+#### Gemini API の無料枠と有料枠
+
+| | 無料枠 | 有料枠 |
+| --- | --- | --- |
+| 料金 | かからない | 従量課金（spend cap で上限を設定できる） |
+| 送信した内容（利用者の質問を含む） | **Google の製品改善に使われる** | 使われない |
+| 利用回数の上限 | 低い（1分あたり・1日あたり）。[AI Studio の Rate limit 画面](https://aistudio.google.com/rate-limit)で確認 | 利用実績に応じて上がる |
+
+* 無料枠のキーで一般公開する場合は、利用者の入力が Google の製品改善に使われることを利用者に伝えてください。
+* Gemini のキーを発行したプロジェクトに請求先アカウントをつなぐと、そのプロジェクトは自動で有料枠になります。Cloud Run には請求先アカウントが必要なため、無料枠のまま使う場合は、Gemini のキーを発行するプロジェクトを Cloud Run のプロジェクトと分けてください。
 
 ## 🧪 テスト
 
